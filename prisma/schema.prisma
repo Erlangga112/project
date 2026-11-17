@@ -1,0 +1,320 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  WARGA
+  STAF_DESA
+  SUPERVISOR
+  KEPALA_DESA
+}
+
+enum StatusWarga {
+  AKTIF
+  PINDAH
+  MENINGGAL
+}
+
+enum StatusPengajuan {
+  DIAJUKAN
+  DIPERIKSA
+  PERLU_PERBAIKAN
+  MENUNGGU_VALIDASI
+  DISETUJUI_SUPERVISOR
+  MENUNGGU_APPROVAL_KEPALA_DESA
+  DISETUJUI
+  DITOLAK
+  SELESAI
+}
+
+model User {
+  id            String    @id @default(cuid())
+  nama          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  password      String?
+  image         String?
+  role          Role      @default(WARGA)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts         Account[]
+  sessions         Session[]
+  profilWarga      ProfilWarga?
+  pengajuanLayanan PengajuanLayanan[] // Relasi pengajuan jika user adalah WARGA
+  approvalLayanan  PengajuanLayanan[] @relation("PihakPenyetuju") // Relasi jika user adalah staf/kades yang memproses
+  logPengajuans    LogPengajuan[]
+  aiChatLogs       AiChatLog[]
+  notifications    Notification[]
+  systemLogs       SystemLog[]
+  petugasContact   PetugasContact?
+  notificationLogs NotificationLog[]
+}
+
+model ProfilWarga {
+  id     String @id @default(cuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  nik          String      @unique
+  noKk         String
+  namaLengkap  String
+  tempatLahir  String
+  tanggalLahir DateTime
+  alamat       String      @db.Text
+  rt           String      @db.VarChar(5)
+  rw           String      @db.VarChar(5)
+  noTelepon    String?
+  status       StatusWarga @default(AKTIF)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([nik])
+  @@index([noKk])
+  @@index([namaLengkap])
+}
+
+model JenisLayanan {
+  id            String   @id @default(cuid())
+  kode          String   @unique
+  nama          String
+  deskripsi     String?  @db.Text
+  persyaratan   String   @db.Text // JSON string (array of strings)
+  estimasiWaktu Int // Estimasi waktu dalam satuan hari
+  templateSurat String?  @db.Text
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  pengajuanLayanan PengajuanLayanan[]
+}
+
+model PengajuanLayanan {
+  id             String @id @default(cuid())
+  nomorPengajuan String @unique
+
+  // Warga yang mengajukan
+  pemohonId String
+  pemohon   User   @relation(fields: [pemohonId], references: [id], onDelete: Cascade)
+
+  // Jenis layanan yang diajukan
+  jenisLayananId String
+  jenisLayanan   JenisLayanan @relation(fields: [jenisLayananId], references: [id])
+
+  status  StatusPengajuan @default(DIAJUKAN)
+  catatan String?         @db.Text
+
+  dokumen      DokumenPengajuan[]
+  logs         LogPengajuan[]
+  dokumenHasil DokumenHasil?
+  notificationLogs NotificationLog[]
+
+  // Petugas yang memproses
+  diprosesOlehId String?
+  diprosesOleh   User?   @relation("PihakPenyetuju", fields: [diprosesOlehId], references: [id])
+
+  tanggalPengajuan DateTime  @default(now())
+  tanggalSelesai   DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([pemohonId])
+  @@index([status])
+  @@index([jenisLayananId])
+  @@index([nomorPengajuan])
+}
+
+model DokumenPengajuan {
+  id String @id @default(cuid())
+
+  pengajuanId String
+  pengajuan   PengajuanLayanan @relation(fields: [pengajuanId], references: [id], onDelete: Cascade)
+
+  namaDokumen       String
+  filePath          String
+  fileType          String
+  fileSize          Int
+  statusVerifikasi  Boolean?
+  catatanVerifikasi String?  @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([pengajuanId])
+}
+
+model LogPengajuan {
+  id           String           @id @default(cuid())
+  pengajuanId  String
+  pengajuan    PengajuanLayanan @relation(fields: [pengajuanId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User             @relation(fields: [userId], references: [id])
+  action       String
+  catatan      String?          @db.Text
+  statusBefore String?
+  statusAfter  String?
+  createdAt    DateTime         @default(now())
+
+  @@index([pengajuanId])
+}
+
+// Model NextAuth standard
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model DokumenHasil {
+  id          String           @id @default(cuid())
+  pengajuanId String           @unique
+  pengajuan   PengajuanLayanan @relation(fields: [pengajuanId], references: [id], onDelete: Cascade)
+  nomorSurat  String           @unique
+  content     String           @db.Text
+  filePath    String?
+  fileSize    Int?
+  version     Int              @default(1)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+model AiChatLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  query     String   @db.Text
+  response  String   @db.Text
+  createdAt DateTime @default(now())
+}
+
+enum NotificationType {
+  INFO
+  SUCCESS
+  WARNING
+  ERROR
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String           @db.Text
+  type      NotificationType @default(INFO)
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([userId])
+  @@index([readAt])
+}
+
+model SystemLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  entity    String?
+  entityId  String?
+  details   String?  @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([entity])
+}
+
+enum NotificationChannel {
+  EMAIL
+  WHATSAPP
+}
+
+enum NotificationDeliveryStatus {
+  PENDING
+  SENT
+  FAILED
+  SKIPPED
+}
+
+model PetugasContact {
+  id                      String   @id @default(cuid())
+  userId                  String   @unique
+  user                    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  noWhatsapp              String   // Standard Indonesian format e.g. +6281234567890
+  namaPetugas             String?
+  role                    Role
+  isActive                Boolean  @default(true)
+  isVerified              Boolean  @default(false)
+  notifyNewSubmission     Boolean  @default(true)
+  notifyPendingValidation Boolean  @default(true)
+  notifyPendingApproval   Boolean  @default(true)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@index([role])
+  @@index([isActive])
+}
+
+model NotificationLog {
+  id                String                     @id @default(cuid())
+  channel           NotificationChannel
+  event             String                     // PENGAJUAN_BARU, DIPERIKSA, PERLU_PERBAIKAN, MENUNGGU_VALIDASI, MENUNGGU_APPROVAL_KADES, DISETUJUI, DITOLAK, SELESAI, TEST_SIMULASI
+  pengajuanId       String?
+  pengajuan         PengajuanLayanan?          @relation(fields: [pengajuanId], references: [id], onDelete: SetNull)
+  userId            String?
+  user              User?                      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  recipient         String                     // Email address or WhatsApp phone number
+  recipientName     String?
+  subject           String?                    // Email subject or WhatsApp header
+  message           String                     @db.Text
+  status            NotificationDeliveryStatus @default(PENDING)
+  providerMessageId String?
+  errorMessage      String?                    @db.Text
+  attemptCount      Int                        @default(1)
+  idempotencyKey    String?                    @unique
+  metadata          String?                    @db.Text // JSON string for additional context
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+
+  @@index([channel])
+  @@index([status])
+  @@index([pengajuanId])
+  @@index([userId])
+  @@index([createdAt])
+}
